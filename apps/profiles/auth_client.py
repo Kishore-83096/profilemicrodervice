@@ -1,4 +1,3 @@
-# apps/profiles/auth_client.py
 import requests
 from django.conf import settings
 from requests.adapters import HTTPAdapter
@@ -6,29 +5,34 @@ from urllib3.util.retry import Retry
 
 
 class AuthClientError(Exception):
-    """Custom exception for AuthClient errors"""
+    """
+    Custom exception raised when AUTH_MS communication fails
+    """
     pass
 
 
 class AuthClient:
     """
-    Central client for communicating with AUTH_MS.
-    Handles token validation and fetching user info.
+    Centralized client to communicate with AUTH_MS service.
+    Responsible for:
+    - Token validation
+    - Fetching authenticated user details
     """
 
     def __init__(self, base_url=None):
-        # Remove trailing slash to avoid double slashes
+        # Base URL of AUTH_MS (remove trailing slash to avoid //)
         self.base_url = (base_url or settings.AUTH_MS_BASE_URL).rstrip("/")
 
-        # ---- Retry configuration ----
+        # Retry strategy for handling temporary failures
         retry_strategy = Retry(
-            total=3,                    # total retry attempts
-            backoff_factor=2,           # 2s, 4s, 8s delays
+            total=3,
+            backoff_factor=2,  # 2s, 4s, 8s
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=["GET"],
             raise_on_status=False,
         )
 
+        # Attach retry adapter
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session = requests.Session()
         self.session.mount("https://", adapter)
@@ -36,9 +40,16 @@ class AuthClient:
 
     def get_user(self, token: str) -> dict:
         """
-        Calls AUTH_MS /me endpoint with the provided token.
-        Returns user info JSON if valid.
-        Raises AuthClientError if token is missing, invalid, or AUTH_MS is unreachable.
+        Calls AUTH_MS `/me/` endpoint using Bearer token.
+
+        Args:
+            token (str): JWT access token
+
+        Returns:
+            dict: Authenticated user data
+
+        Raises:
+            AuthClientError: For invalid token or connection failure
         """
         if not token:
             raise AuthClientError("Authorization token is missing.")
@@ -46,34 +57,27 @@ class AuthClient:
         headers = {"Authorization": f"Bearer {token}"}
         url = f"{self.base_url}/me/"
 
-        print("Sending token to AUTH_MS:", headers)  # DEBUG
-        print("AUTH_MS URL:", url)  # DEBUG
-
         try:
-            response = self.session.get(
-                url,
-                headers=headers,
-                timeout=30   # enough for Render cold start
-            )
+            response = self.session.get(url, headers=headers, timeout=30)
 
             if response.status_code == 200:
-                return response.json()
+                data = response.json().get("data")
+                if not data:
+                    raise AuthClientError("No user data returned from AUTH_MS.")
+                return data
 
-            elif response.status_code == 401:
+            if response.status_code == 401:
                 raise AuthClientError("Invalid or expired token.")
 
-            elif response.status_code >= 500:
-                raise AuthClientError(
-                    "AUTH_MS is temporarily unavailable. Please try again."
-                )
+            if response.status_code >= 500:
+                raise AuthClientError("AUTH_MS is temporarily unavailable.")
 
-            else:
-                raise AuthClientError(
-                    f"AUTH_MS returned status {response.status_code}: {response.text}"
-                )
+            raise AuthClientError(
+                f"AUTH_MS returned {response.status_code}: {response.text}"
+            )
 
         except requests.exceptions.Timeout:
-            raise AuthClientError("AUTH_MS timed out (possible cold start).")
+            raise AuthClientError("AUTH_MS timed out (cold start possible).")
 
         except requests.exceptions.RequestException as e:
             raise AuthClientError(f"Error connecting to AUTH_MS: {e}")

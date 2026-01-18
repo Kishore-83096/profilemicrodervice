@@ -1,238 +1,256 @@
-# Create your views here.
-from rest_framework.views import APIView
-from .auth_client import AuthClient, AuthClientError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import UserProfile, Address, Card
-from .serializers import UserProfileSerializer, AddressSerializer, CardSerializer
+from rest_framework.exceptions import NotAuthenticated, ValidationError
+
 from .auth_client import AuthClient, AuthClientError
+from .models import UserProfile, Address, Card
+from .serializers import (
+    UserProfileSerializer,
+    AddressSerializer,
+    CardSerializer
+)
 
 auth_client = AuthClient()
 
 
-class HealthCheckView(APIView):
-    def get(self, request):
-        return Response(
-            {"status": "Profile_MS is running"},
-            status=status.HTTP_200_OK
-        )
+# ------------------------------------------------------------------
+# Success Response Helper (MANDATORY FORMAT)
+# ------------------------------------------------------------------
+def success_response(data, status_code=status.HTTP_200_OK):
+    return Response(
+        {
+            "success": True,
+            "data": data
+        },
+        status=status_code
+    )
 
 
-
-
-class TestAuthView(APIView):
-    def get(self, request):
-        auth_header = request.headers.get("Authorization")
-        token = None
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-
-        try:
-            user_data = auth_client.get_user(token)
-            return Response({
-                "message": "Profile_MS successfully connected to AUTH_MS",
-                "user": user_data
-            })
-        except AuthClientError as e:
-            return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from .models import UserProfile, Address, Card
-from .serializers import UserProfileSerializer, AddressSerializer, CardSerializer
-from .auth_client import AuthClient, AuthClientError
-
-auth_client = AuthClient()
-
-
+# ------------------------------------------------------------------
+# Authentication Helper
+# ------------------------------------------------------------------
 def get_authenticated_user(request):
     auth_header = request.headers.get("Authorization")
+
     if not auth_header or not auth_header.startswith("Bearer "):
-        return None
+        raise NotAuthenticated("Authorization token missing.")
+
     token = auth_header.split(" ")[1]
+
     try:
         return auth_client.get_user(token)
     except AuthClientError:
-        return None
+        raise NotAuthenticated("Invalid or expired token.")
 
 
-class UserProfileView(APIView):
+# ------------------------------------------------------------------
+# Health Check
+# ------------------------------------------------------------------
+class HealthCheckView(APIView):
+
+    def get(self, request):
+        return success_response(
+            {"status": "Profile_MS is running"}
+        )
+
+
+# ------------------------------------------------------------------
+# AUTH_MS Connectivity Test
+# ------------------------------------------------------------------
+class TestAuthView(APIView):
+
     def get(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        return success_response({
+            "username": user_data.get("username"),
+            "email": user_data.get("email"),
+            "person_id": user_data.get("person_id"),
+        })
+
+
+# ------------------------------------------------------------------
+# User Profile
+# ------------------------------------------------------------------
+class UserProfileView(APIView):
+
+    def get(self, request):
+        user_data = get_authenticated_user(request)
+
+        person_id = user_data.get("person_id") or user_data.get("id")
+        email = user_data.get("email")
+
+        if not person_id:
+            raise ValidationError("person_id missing from Auth MS response.")
 
         profile, _ = UserProfile.objects.get_or_create(
-            person_id=user_data["person_id"], defaults={"email": user_data["email"]}
+            person_id=person_id,
+            defaults={"email": email}
         )
-        serializer = UserProfileSerializer(profile)
-        return Response(serializer.data)
+
+        return success_response(
+            UserProfileSerializer(profile).data
+        )
 
     def put(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        person_id = user_data.get("person_id") or user_data.get("id")
+        email = user_data.get("email")
+
+        if not person_id:
+            raise ValidationError("person_id missing from Auth MS response.")
 
         profile, _ = UserProfile.objects.get_or_create(
-            person_id=user_data["person_id"], defaults={"email": user_data["email"]}
+            person_id=person_id,
+            defaults={"email": email}
         )
+
         data = request.data.copy()
         data.pop("email", None)
         data.pop("person_id", None)
 
         serializer = UserProfileSerializer(profile, data=data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return success_response(serializer.data)
 
 
+# ------------------------------------------------------------------
+# Address Management
+# ------------------------------------------------------------------
 class AddressListCreateView(APIView):
+
     def get(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
         serializer = AddressSerializer(profile.addresses.all(), many=True)
-        return Response(serializer.data)
+
+        return success_response(serializer.data)
 
     def post(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
         serializer = AddressSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(user=profile)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=profile)
+
+        return success_response(
+            serializer.data,
+            status_code=status.HTTP_201_CREATED
+        )
 
 
 class AddressDetailView(APIView):
+
     def get_object(self, pk, profile):
-        return profile.addresses.get(pk=pk)
+        try:
+            return profile.addresses.get(pk=pk)
+        except Address.DoesNotExist:
+            raise ValidationError("Address not found.")
 
     def get(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            address = self.get_object(pk, profile)
-        except Address.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        address = self.get_object(pk, profile)
 
-        serializer = AddressSerializer(address)
-        return Response(serializer.data)
+        return success_response(
+            AddressSerializer(address).data
+        )
 
     def put(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            address = self.get_object(pk, profile)
-        except Address.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        address = self.get_object(pk, profile)
 
         serializer = AddressSerializer(address, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return success_response(serializer.data)
 
     def delete(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            address = self.get_object(pk, profile)
-        except Address.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-
+        address = self.get_object(pk, profile)
         address.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ------------------------------------------------------------------
+# Card Management
+# ------------------------------------------------------------------
 class CardListCreateView(APIView):
+
     def get(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
         serializer = CardSerializer(profile.cards.all(), many=True)
-        return Response(serializer.data)
+
+        return success_response(serializer.data)
 
     def post(self, request):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
+
         if profile.cards.count() >= 4:
-            return Response({"error": "Maximum 4 cards allowed"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("Maximum 4 cards allowed.")
 
         serializer = CardSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(user=profile)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=profile)
+
+        return success_response(
+            serializer.data,
+            status_code=status.HTTP_201_CREATED
+        )
 
 
 class CardDetailView(APIView):
+
     def get_object(self, pk, profile):
-        return profile.cards.get(pk=pk)
+        try:
+            return profile.cards.get(pk=pk)
+        except Card.DoesNotExist:
+            raise ValidationError("Card not found.")
 
     def get(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            card = self.get_object(pk, profile)
-        except Card.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        card = self.get_object(pk, profile)
 
-        serializer = CardSerializer(card)
-        return Response(serializer.data)
+        return success_response(
+            CardSerializer(card).data
+        )
 
     def put(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            card = self.get_object(pk, profile)
-        except Card.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        card = self.get_object(pk, profile)
 
         serializer = CardSerializer(card, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return success_response(serializer.data)
 
     def delete(self, request, pk):
         user_data = get_authenticated_user(request)
-        if not user_data:
-            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile = UserProfile.objects.get(person_id=user_data["person_id"])
-        try:
-            card = self.get_object(pk, profile)
-        except Card.DoesNotExist:
-            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-
+        card = self.get_object(pk, profile)
         card.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)

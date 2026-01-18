@@ -1,7 +1,12 @@
 from rest_framework import serializers
 from .models import UserProfile, Address, Card
 
+
 class UserProfileSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user profile data
+    """
+
     class Meta:
         model = UserProfile
         fields = [
@@ -12,22 +17,38 @@ class UserProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["person_id", "email"]
 
+
 class AddressSerializer(serializers.ModelSerializer):
+    """
+    Serializer for address management
+    """
+
     class Meta:
         model = Address
         fields = "__all__"
         read_only_fields = ["user", "created_at", "updated_at"]
 
+
 class CardSerializer(serializers.ModelSerializer):
+    """
+    Serializer for card information
+    """
+
     class Meta:
         model = Card
         fields = "__all__"
         read_only_fields = ["user", "created_at", "updated_at"]
 
     def validate_card_brand(self, value):
+        """
+        Validate card brand based on card type
+        """
         card_type = self.initial_data.get("card_type")
+
         if card_type == "credit" and value not in dict(Card.CREDIT_CARD_BRANDS):
             raise serializers.ValidationError("Invalid credit card brand.")
+
         if card_type == "debit" and value not in dict(Card.DEBIT_CARD_BRANDS):
             raise serializers.ValidationError("Invalid debit card brand.")
+
         return value
