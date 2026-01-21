@@ -67,10 +67,14 @@ MIDDLEWARE = [
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'apps.profiles.authentication.JWTAuthentication',
     ],
     "EXCEPTION_HANDLER": "apps.profiles.exceptions.custom_exception_handler",
 }
+
 
 AUTH_MS_BASE_URL = os.getenv("AUTH_MS_BASE_URL")
 
