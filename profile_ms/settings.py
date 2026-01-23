@@ -33,7 +33,6 @@ if not SECRET_KEY:
 
 DEBUG = os.getenv("DEBUG", "False") == "True"
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
 
 # Application definition
 
@@ -150,12 +149,18 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://authmicroservise.onrender.com",
-    "https://profilemicrodervice.onrender.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
+
+# ======================
+# Allowed Hosts
+# ======================
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+
+
+# ======================
+# CORS & CSRF (PRODUCTION READY)
+# ======================
+
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
