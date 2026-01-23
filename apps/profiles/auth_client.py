@@ -5,9 +5,7 @@ from urllib3.util.retry import Retry
 
 
 class AuthClientError(Exception):
-    """
-    Custom exception raised when AUTH_MS communication fails
-    """
+    """Custom exception raised when AUTH_MS communication fails"""
     pass
 
 
@@ -25,10 +23,10 @@ class AuthClient:
 
         # Retry strategy for handling temporary failures
         retry_strategy = Retry(
-            total=3,
-            backoff_factor=2,  # 2s, 4s, 8s
+            total=10,  # Retry up to 10 times
+            backoff_factor=10,  # Exponential backoff: 10s, 20s, 40s...
             status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["GET"],
+            allowed_methods=["GET", "POST"],  # Add POST if you call POST endpoints
             raise_on_status=False,
         )
 
@@ -58,7 +56,8 @@ class AuthClient:
         url = f"{self.base_url}/me/"
 
         try:
-            response = self.session.get(url, headers=headers, timeout=30)
+            # Increase timeout to 60s for slow-starting services
+            response = self.session.get(url, headers=headers, timeout=60)
 
             if response.status_code == 200:
                 data = response.json().get("data")
